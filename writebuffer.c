@@ -46,10 +46,9 @@ typedef struct Buffer_ {
     struct Buffer_ *next;
     pthread_mutex_t lock;
     unsigned char type;
-#ifndef FILE_BUFFER
     unsigned long length;
     unsigned char *buf;
-#else
+#ifdef FILE_BUFFER
     char file[256];
 #endif
 } Buffer;
@@ -76,10 +75,10 @@ static void *writer(void *ignore)
     unsigned long written = 0;
 #ifdef FILE_BUFFER
     ssize_t rd;
-    char *buf;
+    unsigned char *buf;
     int fd;
 
-    SF(buf, malloc, NULL, (BUFSZ));
+    buf = NULL;
 #endif
 
     while (1) {
@@ -97,14 +96,22 @@ static void *writer(void *ignore)
 #ifdef FILE_BUFFER
         pthread_mutex_unlock(&cur->lock);
         /* read it in */
-        SF(fd, open, -1, (cur->file, O_RDONLY));
-        rd = read(fd, buf, (BUFSZ));
-        if (rd == -1) {
-            perror("read");
-            exit(1);
+        if (cur->buf) {
+            free(buf);
+            rd = cur->length;
+            buf = cur->buf;
+        } else {
+            SF(fd, open, -1, (cur->file, O_RDONLY));
+            if (buf == NULL)
+                SF(buf, malloc, NULL, (BUFSZ));
+            rd = read(fd, buf, (BUFSZ));
+            if (rd == -1) {
+                perror("read");
+                exit(1);
+            }
+            close(fd);
+            unlink(cur->file);
         }
-        close(fd);
-        unlink(cur->file);
 #endif
 
         /* write it out */
@@ -199,13 +206,14 @@ retryNew:
         goto waitRetryNew;
     }
     bufCt++;
-    cur->length = 0;
 #else
     SF(cur, malloc, NULL, (sizeof(Buffer)));
+    cur->buf = NULL;
     sprintf(cur->file, ".buf.%lu", bufCt++);
 #endif
 
     pthread_mutex_init(&cur->lock, NULL);
+    cur->length = 0;
     cur->type = BUF_TYPE_NORMAL;
     return cur;
 
@@ -224,7 +232,7 @@ int main(int argc, char **argv)
     ssize_t rd;
     Buffer *cur, *tail;
 #ifdef FILE_BUFFER
-    char *buf;
+    unsigned char *buf, *nbuf;
     size_t len;
 #endif
 
@@ -281,15 +289,27 @@ int main(int argc, char **argv)
     while ((rd = read(0, buf + len, BUFSZ - len)) >= 0) {
         len += rd;
         if (len == BUFSZ || rd == 0) {
-            int fd;
+            int fd, sv;
 
-            /* write it to the file */
-            SF(fd, open, -1, (cur->file, O_CREAT|O_WRONLY, 0600));
-            if (write(fd, buf, len) != len) {
-                perror("write");
-                exit(1);
+            /* avoid writing to the file if we can */
+            if (sem_getvalue(&outBufferSem, &sv) == 0 &&
+                sv == 0 &&
+                (nbuf = malloc(BUFSZ)) != NULL) {
+                /* give them our buffer */
+                cur->length = len;
+                cur->buf = buf;
+                buf = nbuf;
+
+            } else {
+                /* write it to the file */
+                SF(fd, open, -1, (cur->file, O_CREAT|O_WRONLY, 0600));
+                if (write(fd, buf, len) != len) {
+                    perror("write");
+                    exit(1);
+                }
+                close(fd);
+
             }
-            close(fd);
 #endif
 
             /* read all we can for now, add it to the write queue */
@@ -299,18 +319,17 @@ int main(int argc, char **argv)
 
             tail->next = cur;
             tail->type = (rd == 0) ? BUF_TYPE_END : BUF_TYPE_NORMAL;
-#ifndef FILE_BUFFER
             tail->length = cur->length;
             tail->buf = cur->buf;
-#else
+#ifdef FILE_BUFFER
             strcpy(tail->file, cur->file);
 #endif
 
             cur->next = NULL;
             cur->type = BUF_TYPE_TAIL;
-#ifndef FILE_BUFFER
+            cur->length = 0;
             cur->buf = NULL;
-#else
+#ifdef FILE_BUFFER
             len = 0;
 #endif
 

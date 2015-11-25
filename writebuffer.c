@@ -110,7 +110,7 @@ static void *writer(void *ignore)
                 exit(1);
             }
             close(fd);
-            unlink(cur->file);
+            /*unlink(cur->file);*/
         }
 #endif
 
@@ -233,7 +233,9 @@ int main(int argc, char **argv)
     Buffer *cur, *tail;
 #ifdef FILE_BUFFER
     unsigned char *buf, *nbuf;
+    char fileNm[256];
     size_t len;
+    unsigned int ui;
 #endif
 
     if (argc > 1) {
@@ -346,6 +348,14 @@ int main(int argc, char **argv)
     }
 
     pthread_join(writerTh, NULL);
+
+#ifdef FILE_BUFFER
+    /* delete all our file buffers */
+    for (ui = 0; ui < bufCt; ui++) {
+        sprintf(fileNm, ".buf.%lu", ui);
+        unlink(fileNm);
+    }
+#endif
 
     return 0;
 }

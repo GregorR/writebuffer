@@ -293,25 +293,13 @@ int main(int argc, char **argv)
         if (len == BUFSZ || rd == 0) {
             int fd, sv;
 
-            /* avoid writing to the file if we can */
-            if (sem_getvalue(&outBufferSem, &sv) == 0 &&
-                sv == 0 &&
-                (nbuf = malloc(BUFSZ)) != NULL) {
-                /* give them our buffer */
-                cur->length = len;
-                cur->buf = buf;
-                buf = nbuf;
-
-            } else {
-                /* write it to the file */
-                SF(fd, open, -1, (cur->file, O_CREAT|O_WRONLY, 0600));
-                if (write(fd, buf, len) != len) {
-                    perror("write");
-                    exit(1);
-                }
-                close(fd);
-
+            /* write it to the file */
+            SF(fd, open, -1, (cur->file, O_CREAT|O_WRONLY, 0600));
+            if (write(fd, buf, len) != len) {
+                perror("write");
+                exit(1);
             }
+            close(fd);
 #endif
 
             /* read all we can for now, add it to the write queue */
